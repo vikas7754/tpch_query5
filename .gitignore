@@ -5,3 +5,9 @@ result/
 .DS_Store
 
 .idea/
+
+res/
+
+out/
+
+cmake-build-debug/

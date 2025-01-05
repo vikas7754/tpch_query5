@@ -1,6 +1,5 @@
 #include <iostream>
 #include <fstream>
-#include <sstream>
 #include <vector>
 #include <string>
 #include <thread>
@@ -8,6 +7,7 @@
 #include <mutex>
 #include <algorithm>
 #include <chrono>
+#include <functional>
 
 using namespace std;
 using namespace std::chrono;
@@ -44,129 +44,189 @@ struct Region {
     string name;
 };
 
-// Function to parse a table
+// Batch parsing function
 template<typename T>
-vector<T> parseTable(const string &filePath, function<T(const string &)> parseFunc) {
-    vector<T> table;
-    ifstream file(filePath);
-    string line;
+void parseChunk(const vector<string> &lines, vector<T> &table, function<T(const string &)> parseFunc) {
+    vector<T> localTable;
+    for (const string &line : lines) {
+        localTable.push_back(parseFunc(line));
+    }
 
-    while (getline(file, line)) {
-        table.push_back(parseFunc(line));
+    // Append results to the shared table
+    lock_guard<mutex> lock(mtx);
+    table.insert(table.end(), localTable.begin(), localTable.end());
+}
+
+// Optimized table parsing with multithreading
+template<typename T>
+vector<T> parseTable(const string &filePath, function<T(const string &)> parseFunc, int numThreads = 4) {
+    // Read the entire file into memory
+    ifstream file(filePath);
+    string data((istreambuf_iterator<char>(file)), istreambuf_iterator<char>());
+
+    // Split data into lines
+    vector<string> lines;
+    size_t pos = 0, end;
+    while ((end = data.find('\n', pos)) != string::npos) {
+        lines.push_back(data.substr(pos, end - pos));
+        pos = end + 1;
+    }
+
+    // Pre-allocate memory for the table
+    vector<T> table;
+    table.reserve(lines.size());
+
+    // Divide work into chunks for multithreading
+    size_t chunkSize = lines.size() / numThreads;
+    vector<thread> threads;
+
+    for (int i = 0; i < numThreads; ++i) {
+        size_t start = i * chunkSize;
+        size_t end = (i == numThreads - 1) ? lines.size() : (i + 1) * chunkSize;
+        vector<string> chunk(lines.begin() + start, lines.begin() + end);
+
+        threads.emplace_back(parseChunk<T>, chunk, ref(table), parseFunc);
+    }
+
+    for (thread &t : threads) {
+        t.join();
     }
 
     return table;
 }
 
-// Parse functions for each table
+// Optimized parsing functions
 Customer parseCustomer(const string &line) {
-    stringstream ss(line);
-    string token;
+    size_t start = 0, end;
     Customer customer;
 
     // Parse custkey
-    getline(ss, token, '|');
-    customer.custkey = stoi(token);
+    end = line.find('|', start);
+    customer.custkey = stoi(line.substr(start, end - start));
+    start = end + 1;
 
-    getline(ss, token, '|'); // Skip name
-    getline(ss, token, '|'); // Skip address
+    // Skip name and address
+    start = line.find('|', start) + 1;
+    start = line.find('|', start) + 1;
 
     // Parse nationkey
-    getline(ss, token, '|');
-    customer.nationkey = stoi(token);
+    end = line.find('|', start);
+    customer.nationkey = stoi(line.substr(start, end - start));
 
     return customer;
 }
 
 Order parseOrder(const string &line) {
-    stringstream ss(line);
-    string token;
+    size_t start = 0, end;
     Order order;
 
-    getline(ss, token, '|');
-    order.orderkey = stoi(token);
+    // Parse orderkey
+    end = line.find('|', start);
+    order.orderkey = stoi(line.substr(start, end - start));
+    start = end + 1;
 
-    getline(ss, token, '|');
-    order.custkey = stoi(token);
+    // Parse custkey
+    end = line.find('|', start);
+    order.custkey = stoi(line.substr(start, end - start));
+    start = end + 1;
 
-    getline(ss, token, '|');
-    getline(ss, token, '|');
+    // Skip other fields
+    start = line.find('|', start) + 1;
+    start = line.find('|', start) + 1;
 
-    getline(ss, token, '|');
-    order.orderdate = token;
+    // Parse orderdate
+    end = line.find('|', start);
+    order.orderdate = line.substr(start, end - start);
 
     return order;
 }
 
 LineItem parseLineItem(const string &line) {
-    stringstream ss(line);
-    string token;
+    size_t start = 0, end;
     LineItem lineItem;
 
-    getline(ss, token, '|');
-    lineItem.orderkey = stoi(token);
+    // Parse orderkey
+    end = line.find('|', start);
+    lineItem.orderkey = stoi(line.substr(start, end - start));
+    start = end + 1;
 
-    getline(ss, token, '|');
+    // Skip other fields
+    start = line.find('|', start) + 1;
 
-    getline(ss, token, '|');
-    lineItem.suppkey = stoi(token);
+    // Parse suppkey
+    end = line.find('|', start);
+    lineItem.suppkey = stoi(line.substr(start, end - start));
+    start = end + 1;
 
-    getline(ss, token, '|');
-    getline(ss, token, '|');
+    // Skip other fields
+    start = line.find('|', start) + 1;
+    start = line.find('|', start) + 1;
 
-    getline(ss, token, '|');
-    lineItem.extendedprice = stod(token);
+    // Parse extendedprice
+    end = line.find('|', start);
+    lineItem.extendedprice = stod(line.substr(start, end - start));
+    start = end + 1;
 
-    getline(ss, token, '|');
-    lineItem.discount = stod(token);
+    // Parse discount
+    end = line.find('|', start);
+    lineItem.discount = stod(line.substr(start, end - start));
 
     return lineItem;
 }
 
 Supplier parseSupplier(const string &line) {
-    stringstream ss(line);
-    string token;
+    size_t start = 0, end;
     Supplier supplier;
 
-    getline(ss, token, '|');
-    supplier.suppkey = stoi(token);
+    // Parse suppkey
+    end = line.find('|', start);
+    supplier.suppkey = stoi(line.substr(start, end - start));
+    start = end + 1;
 
-    getline(ss, token, '|');
-    getline(ss, token, '|');
+    // Skip other fields
+    start = line.find('|', start) + 1;
+    start = line.find('|', start) + 1;
 
-    getline(ss, token, '|');
-    supplier.nationkey = stoi(token);
+    // Parse nationkey
+    end = line.find('|', start);
+    supplier.nationkey = stoi(line.substr(start, end - start));
 
     return supplier;
 }
 
 Nation parseNation(const string &line) {
-    stringstream ss(line);
-    string token;
+    size_t start = 0, end;
     Nation nation;
 
-    getline(ss, token, '|');
-    nation.nationkey = stoi(token);
+    // Parse nationkey
+    end = line.find('|', start);
+    nation.nationkey = stoi(line.substr(start, end - start));
+    start = end + 1;
 
-    getline(ss, token, '|');
-    nation.name = token;
+    // Parse name
+    end = line.find('|', start);
+    nation.name = line.substr(start, end - start);
+    start = end + 1;
 
-    getline(ss, token, '|');
-    nation.regionkey = stoi(token);
+    // Parse regionkey
+    end = line.find('|', start);
+    nation.regionkey = stoi(line.substr(start, end - start));
 
     return nation;
 }
 
 Region parseRegion(const string &line) {
-    stringstream ss(line);
-    string token;
+    size_t start = 0, end;
     Region region;
 
-    getline(ss, token, '|');
-    region.regionkey = stoi(token);
+    // Parse regionkey
+    end = line.find('|', start);
+    region.regionkey = stoi(line.substr(start, end - start));
+    start = end + 1;
 
-    getline(ss, token, '|');
-    region.name = token;
+    // Parse name
+    end = line.find('|', start);
+    region.name = line.substr(start, end - start);
 
     return region;
 }
@@ -208,11 +268,34 @@ void processQuery(const vector<Order> &orders, const vector<LineItem> &lineItems
     }
 }
 
+// Function to process and save results
+void saveResults(const vector<pair<string, double>> &resultVec, const string &outputDir) {
+    // Construct the output file path
+    string outputFilePath = outputDir + "/result.tbl";
+
+    // Open the file for writing (overwrite if exists)
+    ofstream outFile(outputFilePath);
+    if (!outFile) {
+        cerr << "Error: Could not write to file: " << outputFilePath << endl;
+        return;
+    }
+
+    // Write results to the file
+    for (const auto &[nation, revenue] : resultVec) {
+        outFile << nation << "|" << revenue << endl;
+    }
+
+    cout << "Results saved to: " << outputFilePath << endl;
+
+    // Close the file
+    outFile.close();
+}
+
 // Thread manager
 void threadManager(const vector<Order> &orders, const vector<LineItem> &lineItems,
                    const vector<Supplier> &suppliers, const vector<Nation> &nations,
                    const vector<Region> &regions, const string &regionName,
-                   const string &startDate, const string &endDate, int numThreads) {
+                   const string &startDate, const string &endDate, int numThreads, string outputDir) {
     unordered_map<string, double> results;
 
     size_t chunkSize = orders.size() / numThreads;
@@ -240,23 +323,25 @@ void threadManager(const vector<Order> &orders, const vector<LineItem> &lineItem
     for (const auto &[nation, revenue] : resultVec) {
         cout << nation << ": " << revenue << endl;
     }
+    saveResults(resultVec, outputDir);
 }
 
 // Main function
 int main(int argc, char *argv[]) {
-    if (argc < 6) {
-        cerr << "Usage: ./tpch_query5 <data_path> <region_name> <start_date> <end_date> <num_threads>\n";
+    if (argc < 7) {
+        cerr << "Usage: ./tpch_query5 <data_path> <region_name> <start_date> <end_date> <num_threads> <result_dir>\n";
         return 1;
     }
-
-    cout << "Processing data..." << endl;
-    auto start = high_resolution_clock::now();
 
     string dataPath = argv[1];
     string regionName = argv[2];
     string startDate = argv[3];
     string endDate = argv[4];
     int numThreads = stoi(argv[5]);
+    string outputDir = argv[6];
+
+    cout << "Processing data..." << endl;
+    auto start = high_resolution_clock::now();
 
     // Parse tables
     auto customers = parseTable<Customer>(dataPath + "/customer.tbl", parseCustomer);
@@ -267,7 +352,7 @@ int main(int argc, char *argv[]) {
     auto regions = parseTable<Region>(dataPath + "/region.tbl", parseRegion);
 
     // Run query
-    threadManager(orders, lineItems, suppliers, nations, regions, regionName, startDate, endDate, numThreads);
+    threadManager(orders, lineItems, suppliers, nations, regions, regionName, startDate, endDate, numThreads, outputDir);
 
     auto stop = high_resolution_clock::now();
     auto duration = duration_cast<milliseconds>(stop - start);
