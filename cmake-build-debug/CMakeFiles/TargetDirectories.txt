@@ -1,0 +1,3 @@
+/Volumes/Projects/tpch_query5/cmake-build-debug/CMakeFiles/tpch_query5.dir
+/Volumes/Projects/tpch_query5/cmake-build-debug/CMakeFiles/edit_cache.dir
+/Volumes/Projects/tpch_query5/cmake-build-debug/CMakeFiles/rebuild_cache.dir
