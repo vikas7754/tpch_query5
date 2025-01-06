@@ -295,8 +295,9 @@ void saveResults(const vector<pair<string, double>> &resultVec, const string &ou
 void threadManager(const vector<Order> &orders, const vector<LineItem> &lineItems,
                    const vector<Supplier> &suppliers, const vector<Nation> &nations,
                    const vector<Region> &regions, const string &regionName,
-                   const string &startDate, const string &endDate, int numThreads, string outputDir) {
-    unordered_map<string, double> results;
+                   const string &startDate, const string &endDate, int numThreads, const string &outputDir) {
+    // Each thread maintains its own local results
+    vector<unordered_map<string, double>> threadResults(numThreads);
 
     size_t chunkSize = orders.size() / numThreads;
     vector<thread> threads;
@@ -306,23 +307,39 @@ void threadManager(const vector<Order> &orders, const vector<LineItem> &lineItem
         size_t end = (i == numThreads - 1) ? orders.size() : (i + 1) * chunkSize;
 
         vector<Order> orderChunk(orders.begin() + start, orders.begin() + end);
-        threads.emplace_back(processQuery, cref(orderChunk), cref(lineItems),
-                             cref(suppliers), cref(nations), cref(regions),
-                             cref(regionName), cref(startDate), cref(endDate),
-                             ref(results));
+
+        // Use thread-local results for each thread
+        threads.emplace_back([&, i, orderChunk]() {
+            unordered_map<string, double> localResults;
+            processQuery(orderChunk, lineItems, suppliers, nations, regions, regionName, startDate, endDate, localResults);
+            threadResults[i] = std::move(localResults); // Move results to threadResults[i]
+        });
     }
 
     for (auto &t : threads) {
         t.join();
     }
 
-    // Display results
-    vector<pair<string, double>> resultVec(results.begin(), results.end());
-    sort(resultVec.begin(), resultVec.end(), [](auto &a, auto &b) { return a.second > b.second; });
+    // Merge thread-local results into a global results map
+    unordered_map<string, double> mergedResults;
+    for (const auto &localResults : threadResults) {
+        for (const auto &[key, value] : localResults) {
+            mergedResults[key] += value; // Merge local results into global map
+        }
+    }
 
+    // Sort results deterministically by key
+    vector<pair<string, double>> resultVec(mergedResults.begin(), mergedResults.end());
+    sort(resultVec.begin(), resultVec.end(), [](const auto &a, const auto &b) {
+        return a.first < b.first; // Sort by nation name for deterministic order
+    });
+
+    // Output results
     for (const auto &[nation, revenue] : resultVec) {
         cout << nation << ": " << revenue << endl;
     }
+
+    // Save results to file
     saveResults(resultVec, outputDir);
 }
 
