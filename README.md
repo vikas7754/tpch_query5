@@ -1,5 +1,8 @@
 # TPC - H Query 5
 
+### GitHub Repo
+[https://github.com/vikas7754/tpch_query5](https://github.com/vikas7754/tpch_query5)
+
 ### Run Project
 
 #### With default parameters
